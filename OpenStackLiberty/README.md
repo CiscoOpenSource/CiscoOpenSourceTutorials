@@ -430,7 +430,8 @@ When configuring I first laid out a partition when I installed Linux that was ca
 ```
 I created a directory structure:
 ```
-mkdir -p /openstack/glance/images/
+mkdir -p /openstack/glance
+chown -R glance:glance /openstack/glance
 ```
 To store all the images. 
 
@@ -517,4 +518,119 @@ rm -f /var/lib/glance/glance.sqlite
 Now test it to make sure it works: 
 ```
 wget http://download.cirros-cloud.net/0.3.4/cirros-0.3.4-x86_64-disk.img
+```
+
+Now add the image to glance to ensure it works:
+```
+glance image-create --name "cirros" --file cirros-0.3.4-x86_64-disk.img --disk-format qcow2 --container-format bare --visibility public --progress
+```
+
+### Nova Controller Installation
+Update the database so we can install Nova goodness: 
+
+```
+mysql -p 
+
+MariaDB [(none)]> create database nova;
+Query OK, 1 row affected (0.00 sec)
+
+MariaDB [(none)]> GRANT ALL PRIVILEGES ON nova.* TO 'nova'@'localhost' IDENTIFIED BY 'Cisco.123';
+Query OK, 0 rows affected (0.00 sec)
+
+MariaDB [(none)]> GRANT ALL PRIVILEGES ON nova.* TO 'nova'@'%' IDENTIFIED BY 'Cisco.123';
+Query OK, 0 rows affected (0.00 sec)
+
+MariaDB [(none)]> quit
+```
+
+Now add the nova service information to keystone
+```
+openstack user create --domain default --password-prompt nova
+openstack role add --project service --user nova admin
+openstack service create --name nova --description "OpenStack Compute" compute
+openstack endpoint create --region RegionOne compute public http://controller01:8774/v2/%\(tenant_id\)s
+openstack endpoint create --region RegionOne compute internal http://controller01:8774/v2/%\(tenant_id\)s
+openstack endpoint create --region RegionOne compute admin http://controller01:8774/v2/%\(tenant_id\)s
+```
+
+Installing Nova is more packages:
+```
+apt-get install -y nova-api nova-cert nova-conductor nova-consoleauth nova-novncproxy nova-scheduler python-novaclient
+```
+And then modifying the configuration file.  The ```/etc/nova/nova.conf``` file looks like this:
+```
+[DEFAULT]
+dhcpbridge_flagfile=/etc/nova/nova.conf
+dhcpbridge=/usr/bin/nova-dhcpbridge
+logdir=/var/log/nova
+state_path=/var/lib/nova
+lock_path=/var/lock/nova
+force_dhcp_release=True
+libvirt_use_virtio_for_bridges=True
+verbose=True
+ec2_private_dns_show_ip=True
+api_paste_config=/etc/nova/api-paste.ini
+enabled_apis=ec2,osapi_compute,metadata
+rpc_backend = rabbit
+auth_strategy = keystone
+my_ip = 192.168.2.210
+network_api_class = nova.network.neutronv2.api.API
+security_group_api = neutron
+linuxnet_interface_driver = nova.network.linux_net.NeutronLinuxBridgeInterfaceDriver
+firewall_driver = nova.virt.firewall.NoopFirewallDriver
+enabled_apis=osapi_compute,metadata
+
+[database]
+connection = mysql+pymysql://nova:Cisco.123@controller01/nova
+
+[keystone_authtoken]
+auth_uri = http://controller01:5000
+auth_url = http://controller01:35357
+auth_plugin = password
+project_domain_id = default
+user_domain_id = default
+project_name = service
+username = nova
+password = Cisco.123
+
+[oslo_concurrency]
+lock_path = /var/lib/nova/tmp
+
+[oslo_messaging]
+rabbit_host = controller01
+rabbit_userid = openstack
+rabbit_password = Cisco.123
+
+[vnc]
+vncserver_listen = $my_ip
+vncserver_proxyclient_address = $my_ip
+
+[glance]
+host = controller01
+```
+Now put all the info in the datbase: 
+```
+su -s /bin/sh -c "nova-manage db sync" nova
+```
+Then restart all the services:
+```
+service nova-api restart
+service nova-cert restart
+service nova-consoleauth restart
+service nova-scheduler restart
+service nova-conductor restart
+service nova-novncproxy restart
+```
+finally, remove the sqlite file:
+```
+rm -f /var/lib/nova/nova.sqlite
+```
+
+Testing to make sure it all works: 
+```
+nova list
++----+------+--------+------------+-------------+----------+
+| ID | Name | Status | Task State | Power State | Networks |
++----+------+--------+------------+-------------+----------+
++----+------+--------+------------+-------------+----------+
 ```
