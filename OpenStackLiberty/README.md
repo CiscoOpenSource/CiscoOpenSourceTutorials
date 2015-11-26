@@ -63,6 +63,17 @@ serve us well to run standard nodes on.
 There are lots of automated ways to do this, but we just used 
 the default Ubuntu Server 14.04.6 we found from Ubuntu's website.  
 
+### Enable remote ssh
+Who wants to enter a password everytime we log in? 
+```
+ssh-keygen -t rsa
+```
+from your laptop: 
+```
+scp ~/.ssh/id_rsa.pub controller01:/home/vallard/.ssh/authorized_keys
+```
+you should be able log in seemlessly!
+
 ### Sudo with no password
 
 The administrator user that we created we allowed to ```sudo``` without a
@@ -98,12 +109,13 @@ ff02::2 ip6-allrouters
 ```
 ### Make sure DNS is set right
 In my case I'm going through a proxy server and DNS has to be set up.  I fixed it
-by modifying ```/etc/resolv.conf``` and adding my name servers:
+by modifying ```/etc/resolv.conf``` and adding my name servers
 
 
 ### Update the machine
 ```
 sudo apt-get update 
+sudo apt-get upgrade
 ```
 
 ### Network Settings
@@ -332,7 +344,7 @@ After that everything started working again.  So we ran:
 ```
 openstack endpoint create --region RegionOne identity public http://controller01:5000/v2.0
 openstack endpoint create --region RegionOne identity internal http://controller01:5000/v2.0
-openstack endpoint create --region RegionOne identity admin http://controller:35357/v2.0
+openstack endpoint create --region RegionOne identity admin http://controller01:35357/v2.0
 ```
 [http://docs.openstack.org/liberty/install-guide-ubuntu/keystone-users.html](Now start here to finish..)
 
@@ -373,4 +385,123 @@ This created my admin account. I verified by running ```openstack token issue```
 there were no problems.  Worked great!
 
 
+#### Glance Installation
+
+Go into mysql and create the account for Glance. 
+```
+mysql -u root -p
+```
+Entering the commands:
+```
+MariaDB [(none)]> CREATE DATABASE glance;
+Query OK, 1 row affected (0.00 sec)
+
+MariaDB [(none)]> GRANT ALL PRIVILEGES ON glance.* TO 'glance'@'localhost' IDENTIFIED BY 'Cisco.123';
+Query OK, 0 rows affected (0.00 sec)
+
+MariaDB [(none)]> GRANT ALL PRIVILEGES ON glance.* TO 'glance'@'%' IDENTIFIED BY 'Cisco.123';
+Query OK, 0 rows affected (0.01 sec)
+```
+Now set glance up
+```
+openstack user create --domain default --password-prompt glance
+openstack role add --project service --user glance admin
+openstack service create --name glance --description "OpenStack Image service" image
+openstack endpoint create --region RegionOne image public http://controller01:9292
+openstack endpoint create --region RegionOne image internal http://controller01:9292
+openstack endpoint create --region RegionOne image admin http://controller01:9292 
+```
+Next we install the glance packages
+```
+sudo apt-get install -y glance python-glanceclient
+```
+When configuring I first laid out a partition when I installed Linux that was called
+```
+/openstack
+```
+I created a directory structure:
+```
+mkdir -p /openstack/glance/images/
+```
+To store all the images. 
+
+Next we modify the ```/etc/glance/glance-api.conf``` file to look like the following:
+```
+[DEFAULT]
+notification_driver = noop
+verbose = True
+
+[database]
+sqlite_db = /var/lib/glance/glance.sqlite
+connection = mysql+pymysql://glance:Cisco.123@controller01/glance
+backend = sqlalchemy
+
+[glance_store]
+default_store = file
+filesystem_store_datadir = /openstack/glance/images/
+
+[image_format]
+[keystone_authtoken]
+auth_uri = http://controller01:5000
+auth_url = http://controller01:35357
+auth_plugin = password
+project_domain_id = default
+user_domain_id = default
+project_name = service
+username = glance
+password = Cisco.123
+[matchmaker_redis]
+[matchmaker_ring]
+[oslo_concurrency]
+[oslo_messaging_amqp]
+[oslo_messaging_qpid]
+[oslo_messaging_rabbit]
+[oslo_policy]
+[paste_deploy]
+flavor = keystone
+[store_type_location_strategy]
+[task]
+[taskflow_executor]
+```
+Then we edit ```/etc/glance/glance-registry.conf``` to look like
+```
+[DEFAULT]
+notification_driver = noop
+verbose = True
+[database]
+connection = mysql+pymysql://glance:Cisco.123@controller01/glance
+sqlite_db = /var/lib/glance/glance.sqlite
+backend = sqlalchemy
+[glance_store]
+[keystone_authtoken]
+auth_uri = http://controller01:5000
+auth_url = http://controller01:35357
+auth_plugin = password
+project_domain_id = default
+user_domain_id = default
+project_name = service
+username = glance
+password = Cisco.123
+
+[matchmaker_redis]
+[matchmaker_ring]
+[oslo_messaging_amqp]
+[oslo_messaging_qpid]
+[oslo_messaging_rabbit]
+[oslo_policy]
+[paste_deploy]
+flavor = keystone
+```
+The files are nearly identical!
+
+As the root user run: 
+```
+su -s /bin/sh -c "glance-manage db_sync" glance
+```
+This will get the database ready for glance!  Now start the service:
+```
+service glance-registry restart
+service glance-api restart
+rm -f /var/lib/glance/glance.sqlite
+```
 
