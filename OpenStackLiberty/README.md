@@ -336,3 +336,41 @@ openstack endpoint create --region RegionOne identity admin http://controller:35
 ```
 [http://docs.openstack.org/liberty/install-guide-ubuntu/keystone-users.html](Now start here to finish..)
 
+```
+openstack project create --domain default --description "Admin Project" admin
+openstack user create --domain default --password-prompt admin
+# enter password
+openstack role create admin
+openstack role add --project admin --user admin admin
+```
+Service stuff:
+```
+openstack project create --domain default --description "Service Project" service
+openstack project create --domain default --description "Demo Project" demo
+```
+Create a user for myself
+```
+openstack user create --domain default --password-prompt vallard
+openstack role create user
+openstack role add --project demo --user vallard user
+
+#### Verify Keystone
+
+Edit ```/etc/keystone/keyston-paste.ini``` and get rid of ```admin_token_auth``` from the pipeline stanzas.
+
+Next, append some values to the ```.profile``` in your admin user account:
+```
+export OS_PROJECT_DOMAIN_ID=default
+export OS_USER_DOMAIN_ID=default
+export OS_PROJECT_NAME=admin
+export OS_TENANT_NAME=admin
+export OS_USERNAME=admin
+export OS_PASSWORD=Cisco.123
+export OS_AUTH_URL=http://controller01:35357/v3
+export OS_IDENTITY_API_VERSION=3
+```
+This created my admin account. I verified by running ```openstack token issue``` to make sure
+there were no problems.  Worked great!
+
+
+
