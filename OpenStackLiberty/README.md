@@ -174,7 +174,7 @@ sudo ifup p1p2
 
 ### NTP
 ```
-sudo apt-get install chrony
+sudo apt-get install -y chrony
 ```
 I left the default debian pool. Verify it works:
 ```
@@ -190,9 +190,14 @@ sudo apt-get install -y python-openstackclient
 
 ### MariaDB SQL Database
 ```
-sudo apt-get install mariadb-server # python-pymysql didn't work
+sudo apt-get install mariadb-server python-pymysql 
 ```
-I tried to find the package by running:
+__Note: If the python-pymysql package can't be found try running apt-get update and then
+apt-get upgrade_
+
+#### Tangent
+At this point I took a tangent, which I shouldn't have and ended up running a few
+unnecessary commands:
 ```
 sudo apt-cache pkgnames python | grep sql
 ```
@@ -202,6 +207,7 @@ sudo apt-get install -y python-pip
 sudo pip --proxy http://proxy.esl.cisco.com install PyMySQL
 ```
 (you'll note I had to use my proxy server to get out)
+
 
 Next we created the ```/etc/mysql/conf.d/mysqld_openstack.cnf``` file. 
 Mine looks like: 
@@ -270,7 +276,8 @@ Copy and paste that token into the ```/etc/keystone/keystone.conf``` file as sho
 ```
 [DEFAULT]
 verbose = True
-admin_token=6a5e0722b889dea9f8b1
+admin_token = 6a5e0722b889dea9f8b1
+log_dir = /var/log/keystone
 
 [database]
 connection = mysql+pymysql://keystone:Cisco.123@controller01/keystone
@@ -305,7 +312,7 @@ The HTTP server is used for the WSGI listener for keystone.
 echo "ServerName controller01" >> /etc/apache2/apache2.conf
 ```
  
-Next I copied and pasted the contents of [http://docs.openstack.org/liberty/install-guide-ubuntu/keystone-install.html](the wsgi conf)
+Next I copied and pasted the contents of (http://docs.openstack.org/liberty/install-guide-ubuntu/keystone-install.html)[the wsgi conf]
 to ```/etc/apache2/sites-available/wsgi-keystone.conf```
 
 Then ran:
@@ -360,11 +367,13 @@ Service stuff:
 openstack project create --domain default --description "Service Project" service
 openstack project create --domain default --description "Demo Project" demo
 ```
+
 Create a user for myself
 ```
 openstack user create --domain default --password-prompt vallard
 openstack role create user
 openstack role add --project demo --user vallard user
+```
 
 #### Verify Keystone
 
@@ -505,3 +514,7 @@ service glance-api restart
 rm -f /var/lib/glance/glance.sqlite
 ```
 
+Now test it to make sure it works: 
+```
+wget http://download.cirros-cloud.net/0.3.4/cirros-0.3.4-x86_64-disk.img
+```
