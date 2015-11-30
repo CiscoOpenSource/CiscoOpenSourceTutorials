@@ -138,30 +138,35 @@ bonding
 
 Next add the following to ```/etc/network/interfaces```
 ```
-auto p1p2
-iface p1p2 inet static
-  address 192.168.2.210
-  netmask 255.255.255.0
-  network 192.168.2.0
-  gateway 192.168.2.1
+# The loopback network interface
+auto lo
+iface lo inet loopback
 
-auto p4p1
-iface p4p1 inet manual
-bond-master bond0
-
-auto p4p2
-iface p4p2 inet manual
-bond-master bond0
+# The primary network interface
+auto p1p1
+iface p1p1 inet static
+        address 10.93.234.96
+        netmask 255.255.255.0
+        network 10.93.234.0
+        gateway 10.93.234.1
+        dns-nameservers 171.70.168.183 173.36.131.10
 
 auto bond0
 iface bond0 inet static
-        address 10.3.0.1
+        address 192.168.2.210
         netmask 255.255.255.0
-        # lacp bond
+        network 192.168.2.0
         bond-mode 4
         bond-miimon 100
         bond-lacp-rate 1
         bond-slaves p4p1 p4p2
+
+auto p4p1
+        iface p4p1 inet manual
+        bond-master bond0
+auto p4p2
+        iface p4p2 inet manual
+        bond-master bond0
 ```
 Then run:
 ```
@@ -174,10 +179,46 @@ sudo ifup p1p2
 ```
 sudo apt-get install -y chrony
 ```
-I left the default debian pool. Verify it works:
+Edit /etc/chrony.conf to look like:
 ```
-sudo chronyc sources
+server ntp.esl.cisco.com iburst
+keyfile /etc/chrony/chrony.keys
+commandkey 1
+driftfile /var/lib/chrony/chrony.drift
+log tracking measurements statistics
+logdir /var/log/chrony
+maxupdateskew 100.0
+dumponexit
+dumpdir /var/lib/chrony
+local stratum 10
+allow 10/8
+allow 192.168/16
+allow 172.16/12
+logchange 0.5
+rtconutc
 ```
+Make sure the service is stopped:
+```
+service chrony stop
+```
+Now set the clock to the right time: 
+```
+ntpdate -bs ntp.esl.cisco.com
+hwclock -w
+```
+Now start the chrony service: 
+```
+service chrony start
+```
+If you need to set the right time zone do something like: 
+```
+cp /usr/share/zoneinfo/America/Los_Angeles /etc/localtime
+```
+Now you should be rolling with good time!
+
+
+
+
 
 ### Install OpenStack Repositories
 ```
@@ -689,16 +730,21 @@ ifdown eth0; ifup eth0
 
 We need IP forwarding to work from the host so that we can get this 
 system to access the internet. On the ```controller01``` machine
-run:
+edit /etc/sysctl.conf and make sure the line is not commented out:
 ```
-sudo sysctl -w net.ipv4.ip_forward=1
+net.ipv4.ip_forward=1
 ```
+Then run: 
+```
+sysctl -p
+```
+
 I also added to the ```/etc/rc.local``` file (before the ```exit 0```)
 
 the following: 
 ```
 iptables -t nat -A POSTROUTING -o p1p1 -j MASQUERADE
-iptables -A FORWARD -i p1p2 -j ACCEPT
+iptables -A FORWARD -i bond0 -j ACCEPT
 ```
 Running those commands on the prompt enables ip forwarding.  Now 
 my node can access the internet!
@@ -710,6 +756,38 @@ apt-get install -y software-properties-common
 add-apt-repository -y cloud-archive:liberty
 apt-get update
 apt-get upgrade
+
+### NTP on the compute node
+It's important that all nodes in the cluster be syncronized 
+to the same clock.  
+```
+apt-get install chrony
+```
+edit ```/etc/chrony/chrony.conf``` to look like: 
+```
+server controller01 iburst
+keyfile /etc/chrony/chrony.keys
+commandkey 1
+driftfile /var/lib/chrony/chrony.drift
+log tracking measurements statistics
+logdir /var/log/chrony
+maxupdateskew 100.0
+dumponexit
+dumpdir /var/lib/chrony
+local stratum 10
+allow 10/8
+allow 192.168/16
+allow 172.16/12
+logchange 0.5
+rtconutc
+```
+The only difference with this configuration is that it points to the 
+controller node instead of an external service. 
+```
+service chrony restart
+```
+
+### Install Nova on the compute node
 apt-get install nova-compute sysfsutils vim
 ```
 
@@ -785,6 +863,132 @@ nova service-list
 ```
 
 ## Neutron Installation
-Here we will install Neutron on the 
+Here we will install Neutron on the controller01 node.
 
+### MySQL Databse
+```
+mysql -p 
+```
+and then we run the following SQL commands: 
+```
+MariaDB [(none)]> create database neutron
+    -> ;
+Query OK, 1 row affected (0.00 sec)
+
+MariaDB [(none)]> GRANT all privileges on neutron.* to 'neutron'@'localhost' identified by 'Cisco.123';
+Query OK, 0 rows affected (0.00 sec)
+
+MariaDB [(none)]> GRANT all privileges on neutron.* to 'neutron'@'%' identified by 'Cisco.123';Query OK, 0 rows affected (0.00 sec)
+```
+Now we configure the Neutron services
+```
+openstack user create --domain default --password-prompt neutron
+openstack role add --project service --user neutron admin
+openstack service create --name neutron --description "OpenStack Networking" network
+openstack endpoint create --region RegionOne network public http://controller01:9696
+openstack endpoint create --region RegionOne network internal http://controller01:9696
+openstack endpoint create --region RegionOne network admin http://controller01:9696
+
+```
+
+### Provider network configuration
+We install the following on the controller node: 
+```
+apt-get install -y neutron-server neutron-plugin-ml2 neutron-plugin-linuxbridge-agent neutron-dhcp-agent neutron-metadata-agent python-neutronclient
+```
+The /etc/neutron/neutron.conf file looks as follows:
+```
+[DEFAULT]
+verbose = True
+core_plugin = ml2
+service_plugins =
+rpc_backend = rabbit
+auth_strategy = keystone
+notify_nova_on_port_status_changes = True
+notify_nova_on_port_data_changes = True
+nova_url = http://controller01:8774/v2
+
+[matchmaker_redis]
+
+[matchmaker_ring]
+[quotas]
+[agent]
+root_helper = sudo /usr/bin/neutron-rootwrap /etc/neutron/rootwrap.conf
+
+[keystone_authtoken]
+
+auth_uri = http://controller01:5000
+auth_url = http://controller01:35357
+auth_plugin = password
+project_domain_id = default
+user_domain_id = default
+project_name = service
+username = neutron
+password = Cisco.123
+
+[database]
+connection = mysql+pymysql://neutron:Cisco.123@controller01/neutron
+
+[nova]
+auth_url = http://controller01:35357
+auth_plugin = password
+project_domain_id = default
+user_domain_id = default
+region_name = RegionOne
+project_name = service
+username = nova
+password = Cisco.123
+
+[oslo_concurrency]
+lock_path = $state_path/lock
+[oslo_policy]
+[oslo_messaging_amqp]
+[oslo_messaging_qpid]
+[oslo_messaging_rabbit]
+rabbit_host = controller01
+rabbit_userid = openstack
+rabbit_password = Cisco.123
+[qos]
+```
+We then edit ```/etc/neutron/plugins/ml2/ml2_conf.ini``` to look like: 
+
+```
+[ml2]
+typ_drivers = flat,vlan
+tenant_network_types =
+mechanism_drivers = linuxbridge
+extension_drivers = port_security
+
+[ml2_type_flat]
+flat_networks = public
+
+[ml2_type_vlan]
+[ml2_type_gre]
+[ml2_type_vxlan]
+[ml2_type_geneve]
+[securitygroup]
+enable_ipset = True
+```
+The ```/etc/neutron/plubins/ml2/linuxbridge_agent.ini``` looks like: 
+```
+[linux_bridge]
+physical_interface_mappings = public:p1p1
+[vxlan]
+enable_vxlan = False
+[agent]
+prevent_arp_spoofing = True
+[securitygroup]
+enable_security_group = True
+firewall_driver = neutron.agent.linux.iptables_firewall.IptablesFirewallDriver
+```
+and the ```/etc/neutron/dhcp_agent.ini``` file looks like: 
+```
+DEFAULT]
+interface_driver = neutron.agent.linux.interface.BridgeInterfaceDriver
+dhcp_driver = neutron.agent.linux.dhcp.Dnsmasq
+enable_isolated_metadata = True
+verbose = True
+[AGENT]
+
+```
 
