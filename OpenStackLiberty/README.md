@@ -41,10 +41,8 @@ The controller node will run:
 * Keystone
 * Glance
 * Nova Controller
+* Neutron Networking
 
-We will not be running Neutron in this cluster.  Its pretty simple and
-we have no need for extra VLANs within the same projects.  KISS unless
-you have a compelling reason!
 
 ### Data Nodes
 
@@ -193,7 +191,7 @@ sudo apt-get install -y python-openstackclient
 sudo apt-get install mariadb-server python-pymysql 
 ```
 __Note: If the python-pymysql package can't be found try running apt-get update and then
-apt-get upgrade_
+apt-get upgrade__
 
 #### Tangent
 At this point I took a tangent, which I shouldn't have and ended up running a few
@@ -634,3 +632,159 @@ nova list
 +----+------+--------+------------+-------------+----------+
 +----+------+--------+------------+-------------+----------+
 ```
+
+## Installing the Compute Nodes
+Our compute nodes were auto installed with xCAT (old habits die
+hard.).  All of these operations we did as the root user.
+We will be adding a ton of post installation scripts but
+for now here's what we did: 
+
+### Setup remote user
+
+The ```vallard``` user is added for administration:
+```
+useradd -m -G sudo -p $(openssl passwd -1 Cisco.123) -s /bin/bash vallard
+```
+
+Add this user to the ```/etc/sudoers``` file so that commands can run without
+authentication.  We did this for the controller node.  
+We append the following:
+```
+vallard ALL=(ALL) NOPASSWD:ALL
+```
+
+Now make sure we can ssh into this node without password authentication from the controller node.  From the __Controller Node__ run the following: 
+```
+cd ~/.ssh
+cat id_rsa.pub >> authorized_keys
+```
+You shoud be able to log into yourself with out having to enter
+a password:
+```
+ssh localhost
+```
+Now copy this directory to the remote host: 
+```
+scp -r ~/.ssh lhv01:/home/vallard
+```
+You'll have to enter the password once, but now you should be able
+to ssh into this node without any authentication. 
+
+### Compute node networking
+
+Now we should statically assign the management network. 
+This is again done by editing /etc/network/interfaces: 
+```
+auto eth0
+iface eth0 inet static
+  address 192.168.2.213
+  netmask 255.255.255.0 
+  network 192.168.2.0
+  gateway 192.168.2.210
+```
+restarting the interface can make sure this is configured correctly:
+```
+ifdown eth0; ifup eth0
+```
+
+We need IP forwarding to work from the host so that we can get this 
+system to access the internet. On the ```controller01``` machine
+run:
+```
+sudo sysctl -w net.ipv4.ip_forward=1
+```
+I also added to the ```/etc/rc.local``` file (before the ```exit 0```)
+
+the following: 
+```
+iptables -t nat -A POSTROUTING -o p1p1 -j MASQUERADE
+iptables -A FORWARD -i p1p2 -j ACCEPT
+```
+Running those commands on the prompt enables ip forwarding.  Now 
+my node can access the internet!
+
+
+### Update Compute node
+```
+apt-get install -y software-properties-common
+add-apt-repository -y cloud-archive:liberty
+apt-get update
+apt-get upgrade
+apt-get install nova-compute sysfsutils vim
+```
+
+Edit the /etc/nova/nova.conf file to look as follows:
+```
+[DEFAULT]
+dhcpbridge_flagfile=/etc/nova/nova.conf
+dhcpbridge=/usr/bin/nova-dhcpbridge
+logdir=/var/log/nova
+state_path=/var/lib/nova
+lock_path=/var/lock/nova
+force_dhcp_release=True
+libvirt_use_virtio_for_bridges=True
+verbose=True
+ec2_private_dns_show_ip=True
+api_paste_config=/etc/nova/api-paste.ini
+enabled_apis=ec2,osapi_compute,metadata
+
+auth_strategy = keystone
+rpc_backend = rabbit
+my_ip = 192.168.2.213
+network_api_class = nova.network.neutronv2.api.API
+security_group_api = neutron
+linuxnet_interface_driver = nova.network.linux_net.NeutronLinuxBridgeInterfaceDriver
+firewall_driver = nova.virt.firewall.NoopFirewallDriver
+
+[glance]
+host = controller01
+
+[keystone_authtoken]
+auth_uri = http://controller01:5000
+auth_url = http://controller01:35357
+auth_plugin = password
+project_domain_id = default
+user_domain_id = default
+project_name = service
+username = nova
+password = Cisco.123
+
+
+[oslo_concurrency]
+lock_path = /var/lib/nova/tmp
+
+[oslo_messaging_rabbit]
+rabbit_host = controller01
+rabbit_userid = openstack
+rabbit_password = Cisco.123
+
+[vnc]
+enabled = True
+vncserver_listen = 0.0.0.0
+vncserver_proxyclient_address = $my_ip
+novncproxy_base_url = http://controller01:6080/vnc_auto.html
+```
+Restart the service:
+```
+service nova-compute restart
+rm -f /var/lib/nova/nova.sqlite
+```
+
+Check from the ```controller01``` node that it works:
+```
+nova service-list
++----+------------------+--------------+----------+---------+-------+----------------------------+-----------------+
+| Id | Binary           | Host         | Zone     | Status  | State | Updated_at                 | Disabled Reason |
++----+------------------+--------------+----------+---------+-------+----------------------------+-----------------+
+| 1  | nova-cert        | controller01 | internal | enabled | up    | 2015-11-30T20:55:53.000000 | -               |
+| 2  | nova-consoleauth | controller01 | internal | enabled | up    | 2015-11-30T20:55:52.000000 | -               |
+| 3  | nova-scheduler   | controller01 | internal | enabled | up    | 2015-11-30T20:55:45.000000 | -               |
+| 4  | nova-conductor   | controller01 | internal | enabled | up    | 2015-11-30T20:55:52.000000 | -               |
+| 5  | nova-compute     | lhv01        | nova     | enabled | up    | 2015-11-30T20:55:46.000000 | -               |
++----+------------------+--------------+----------+---------+-------+----------------------------+-----------------+
+```
+
+## Neutron Installation
+Here we will install Neutron on the 
+
+
