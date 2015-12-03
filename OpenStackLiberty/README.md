@@ -646,6 +646,20 @@ vncserver_proxyclient_address = $my_ip
 
 [glance]
 host = controller01
+
+[neutron]
+url = http://controller01:9696
+auth_url = http://controller01:35357
+auth_plugin = password
+project_domain_id = default
+user_domain_id = default
+region_name = RegionOne
+project_name = service
+username = neutron
+password = Cisco.123
+
+service_metadata_proxy = True
+metadata_proxy_shared_secret = 6a5e0722b889dea9f8b1
 ```
 Now put all the info in the datbase: 
 ```
@@ -788,7 +802,8 @@ service chrony restart
 ```
 
 ### Install Nova on the compute node
-apt-get install nova-compute sysfsutils vim
+apt-get install -y nova-compute sysfsutils vim
+apt-get install -y neutron-plugin-linuxbridge-agent
 ```
 
 Edit the /etc/nova/nova.conf file to look as follows:
@@ -813,6 +828,18 @@ network_api_class = nova.network.neutronv2.api.API
 security_group_api = neutron
 linuxnet_interface_driver = nova.network.linux_net.NeutronLinuxBridgeInterfaceDriver
 firewall_driver = nova.virt.firewall.NoopFirewallDriver
+
+[neutron]
+url = http://controller01:9696
+auth_url = http://controller01:35357
+auth_plugin = password
+project_domain_id = default
+user_domain_id = default
+region_name = RegionOne
+project_name = service
+username = neutron
+password = Cisco.123
+
 
 [glance]
 host = controller01
@@ -842,9 +869,62 @@ vncserver_listen = 0.0.0.0
 vncserver_proxyclient_address = $my_ip
 novncproxy_base_url = http://controller01:6080/vnc_auto.html
 ```
+
+
+Since we're using neutron networking we need to 
+configure ```/etc/neutron/neutron.conf```.  It looks as follows:
+```
+[DEFAULT]
+core_plugin = ml2
+rpc_backend = rabbit
+auth_strategy = keystone
+
+[matchmaker_redis]
+[matchmaker_ring]
+[quotas]
+[agent]
+root_helper = sudo /usr/bin/neutron-rootwrap /etc/neutron/rootwrap.conf
+[keystone_authtoken]
+auth_uri = http://controller01:5000
+auth_url = http://controller01:35357
+auth_plugin = password
+project_domain_id = default
+user_domain_id = default
+project_name = service
+username = neutron
+password = Cisco.123
+[database]
+connection = sqlite:////var/lib/neutron/neutron.sqlite
+[nova]
+[oslo_concurrency]
+lock_path = $state_path/lock
+[oslo_policy]
+[oslo_messaging_amqp]
+[oslo_messaging_qpid]
+[oslo_messaging_rabbit]
+rabbit_host = controller01
+rabbit_userid = openstack
+rabbit_password = Cisco.123
+[qos]
+```
+
+We also edit ```/etc/neutron/plugins/ml2/linuxbridge_agent.ini``` to look like:
+```
+[linux_bridge]
+physical_interface_mappings = public:eth0
+[vxlan]
+enable_vxlan = False
+[agent]
+prevent_arp_spoofing = True
+[securitygroup]
+enable_security_group = True
+firewall_driver = neutron.agent.linux.iptables_firewall.IptablesFirewallDriver
+```
+
 Restart the service:
 ```
 service nova-compute restart
+service neutron-plugin-linuxbridge-agent restart
 rm -f /var/lib/nova/nova.sqlite
 ```
 
@@ -991,4 +1071,54 @@ verbose = True
 [AGENT]
 
 ```
+The ```/etc/metadata_agent.ini``` looks as follows:
+```
+[DEFAULT]
+auth_uri = http://controller01:5000
+auth_url = http://controller01:35357
+auth_region = RegionOne
+auth_plugin = password
+project_domain_id = default
+user_domain_id = default
+project_name = service
+username = neutron
+password = Cisco.123
+nova_metadata_ip = controller01
+metadata_proxy_shared_secret = 6a5e0722b889dea9f8b1
+[AGENT]
+```
 
+You'll notice that the ```metadata_proxy_shared_secret``` value is just a randomly 
+generated string.  
+
+We're finally ready to populate the neutron database: 
+```
+su -s /bin/sh -c "neutron-db-manage --config-file /etc/neutron/neutron.conf --config-file /etc/neutron/plugins/ml2/ml2_conf.ini upgrade head" neutron
+```
+Once this is successful, restart the nova service:
+```
+service nova-api restart
+service neutron-server restart
+service neutron-plugin-linuxbridge-agent restart
+service neutron-dhcp-agent restart
+service neutron-metadata-agent restart
+service neutron-l3-agent restart
+```
+and remove the extra sqlite file:
+```
+rm -f /var/lib/neutron/neutron.sqlite
+```
+
+## Install the Dashboard
+```
+apt-get install -y openstack-dashboard
+```
+
+
+## Creating Networks
+
+We create some networks on the controller node: 
+```
+neutron net-create public --shared --provider:physical_network public --provider:network_type flat
+neutron subnet-create public 192.168.2.0/24 --name public --allocation-pool start=192.168.2.230,end=192.168.2.254 --dns-nameserver 10.93.234.38 --gateway 192.168.2.210
+```
