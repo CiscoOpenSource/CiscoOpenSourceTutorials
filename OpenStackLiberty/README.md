@@ -768,6 +768,10 @@ iptables -A FORWARD -i bond0 -j ACCEPT
 Running those commands on the prompt enables ip forwarding.  Now 
 my node can access the internet!
 
+### /etc/hosts
+
+You should ensure that all compute nodes and the controller nodes share the same ```/etc/hosts``` file. 
+This will ensure name resolution can happen without worrying about an external DNS. 
 
 ### Update Compute node
 ```
