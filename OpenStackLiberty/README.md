@@ -748,6 +748,11 @@ edit /etc/sysctl.conf and make sure the line is not commented out:
 ```
 net.ipv4.ip_forward=1
 ```
+and add the lines: 
+```
+net.ipv4.conf.default.rp_filter=0
+net.ipv4.conf.all.rp_filter=0
+```
 Then run: 
 ```
 sysctl -p
@@ -770,6 +775,19 @@ apt-get install -y software-properties-common
 add-apt-repository -y cloud-archive:liberty
 apt-get update
 apt-get upgrade
+
+### Sysctl on the compute node
+
+Edit ```/etc/sysctl.conf``` and add: 
+```
+net.ipv4.conf.default.rp_filter=0
+net.ipv4.conf.all.rp_filter=0
+```
+then run 
+```
+sysctl -p
+```
+
 
 ### NTP on the compute node
 It's important that all nodes in the cluster be syncronized 
@@ -1034,7 +1052,7 @@ We then edit ```/etc/neutron/plugins/ml2/ml2_conf.ini``` to look like:
 
 ```
 [ml2]
-typ_drivers = flat,vlan
+type_drivers = flat,vlan
 tenant_network_types =
 mechanism_drivers = linuxbridge
 extension_drivers = port_security
@@ -1043,6 +1061,7 @@ extension_drivers = port_security
 flat_networks = public
 
 [ml2_type_vlan]
+# network_vlan_ranges = public
 [ml2_type_gre]
 [ml2_type_vxlan]
 [ml2_type_geneve]
@@ -1052,7 +1071,7 @@ enable_ipset = True
 The ```/etc/neutron/plubins/ml2/linuxbridge_agent.ini``` looks like: 
 ```
 [linux_bridge]
-physical_interface_mappings = public:p1p1
+physical_interface_mappings = public:bond0
 [vxlan]
 enable_vxlan = False
 [agent]
@@ -1102,7 +1121,7 @@ service neutron-server restart
 service neutron-plugin-linuxbridge-agent restart
 service neutron-dhcp-agent restart
 service neutron-metadata-agent restart
-service neutron-l3-agent restart
+#service neutron-l3-agent restart
 ```
 and remove the extra sqlite file:
 ```
@@ -1114,6 +1133,29 @@ rm -f /var/lib/neutron/neutron.sqlite
 apt-get install -y openstack-dashboard
 ```
 
+To avoid bugs since we're using the provider network, you need to change the dashboard settings
+in ```/etc/openstack-dashboard/local_settings.py```
+To look like: 
+```
+OPENSTACK_NEUTRON_NETWORK = {
+#    'enable_router': True,
+#    'enable_quotas': True,
+#    'enable_ipv6': True,
+    'enable_router': False,
+    'enable_quotas': False,
+    'enable_ipv6': False,
+    'enable_distributed_router': False,
+    'enable_ha_router': False,
+#    'enable_lb': True,
+#    'enable_firewall': True,
+#    'enable_vpn': True,
+    'enable_lb': False,
+    'enable_firewall': False,
+    'enable_vpn': False,
+    'enable_fip_topology_check': True,
+    ...
+```
+}
 
 ## Creating Networks
 
@@ -1122,3 +1164,13 @@ We create some networks on the controller node:
 neutron net-create public --shared --provider:physical_network public --provider:network_type flat
 neutron subnet-create public 192.168.2.0/24 --name public --allocation-pool start=192.168.2.230,end=192.168.2.254 --dns-nameserver 10.93.234.38 --gateway 192.168.2.210
 ```
+
+Another network for internal
+```
+neutron net-create cisco-1 --share --provider:physical_network public --provider:network_type vlan --provider:segmentation_id 1
+neutron subnet-create cisco-1 10.93.234.0/24 --name cisco --allocation-pool start=10.93.234.80,end=10.93.234.90 --dns-nameserver 10.93.234.38 --gateway 10.93.234.1
+
+Launching an instance:
+```
+nova boot --flavor m1.tiny --image cirros --nic net-id=public --security-group default --key-name lucky test
+
