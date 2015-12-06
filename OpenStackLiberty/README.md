@@ -780,6 +780,8 @@ add-apt-repository -y cloud-archive:liberty
 apt-get update
 apt-get upgrade
 
+```
+
 ### Sysctl on the compute node
 
 Edit ```/etc/sysctl.conf``` and add: 
@@ -824,6 +826,8 @@ service chrony restart
 ```
 
 ### Install Nova on the compute node
+
+```
 apt-get install -y nova-compute sysfsutils vim
 apt-get install -y neutron-plugin-linuxbridge-agent
 ```
