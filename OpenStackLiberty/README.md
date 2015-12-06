@@ -660,6 +660,9 @@ password = Cisco.123
 
 service_metadata_proxy = True
 metadata_proxy_shared_secret = 6a5e0722b889dea9f8b1
+
+[cinder]
+os_region_name = RegionOne 
 ```
 Now put all the info in the datbase: 
 ```
@@ -775,11 +778,10 @@ This will ensure name resolution can happen without worrying about an external D
 
 ### Update Compute node
 ```
+apt-get -y update
+apt-get -y upgrade
 apt-get install -y software-properties-common
 add-apt-repository -y cloud-archive:liberty
-apt-get update
-apt-get upgrade
-
 ```
 
 ### Sysctl on the compute node
@@ -799,7 +801,7 @@ sysctl -p
 It's important that all nodes in the cluster be syncronized 
 to the same clock.  
 ```
-apt-get install chrony
+apt-get install -y chrony
 ```
 edit ```/etc/chrony/chrony.conf``` to look like: 
 ```
@@ -1181,4 +1183,92 @@ neutron subnet-create cisco-1 10.93.234.0/24 --name cisco --allocation-pool star
 Launching an instance:
 ```
 nova boot --flavor m1.tiny --image cirros --nic net-id=public --security-group default --key-name lucky test
+
+
+## Installing Cinder
+Now that we have the ability to create ephemeral nodes, we'll add some block storage so that things can persist. 
+First we have to install cinder on the controller node.
+```
+mysql -p
+MariaDB [(none)]> create database cinder;
+Query OK, 1 row affected (0.00 sec)
+
+MariaDB [(none)]> grant all privileges on cinder.* to 'cinder'@'localhost' identified by 'Cisco.123';
+Query OK, 0 rows affected (0.00 sec)
+
+MariaDB [(none)]> grant all privileges on cinder.* to 'cinder'@'%' identified by 'Cisco.123';
+Query OK, 0 rows affected (0.00 sec)
+```
+Now create the user: 
+```
+openstack user create --domain default --password-prompt cinder
+# Enter a password
+openstack role add --project service --user cinder admin
+openstack service create --name cinder --description "OpenStack Block Storage" volume
+openstack service create --name cinderv2 --description "OpenStack Block Storage" volumev2
+openstack endpoint create --region RegionOne volume public http://controller01:8776/v1/%\(tenant_id\)s
+openstack endpoint create --region RegionOne volume admin http://controller01:8776/v1/%\(tenant_id\)s
+openstack endpoint create --region RegionOne volume internal http://controller01:8776/v1/%\(tenant_id\)s
+openstack endpoint create --region RegionOne volumev2 internal http://controller01:8776/v2/%\(tenant_id\)s
+openstack endpoint create --region RegionOne volumev2 public http://controller01:8776/v2/%\(tenant_id\)s
+openstack endpoint create --region RegionOne volumev2 admin http://controller01:8776/v2/%\(tenant_id\)s
+```
+Now we install the components
+```
+apt-get install -y cinder-api cinder-scheduler python-cinderclient
+```
+We now edit the ```/etc/cinder/cinder.conf``` file.  This looks like: 
+```
+[DEFAULT]
+rootwrap_config = /etc/cinder/rootwrap.conf
+api_paste_confg = /etc/cinder/api-paste.ini
+iscsi_helper = tgtadm
+volume_name_template = volume-%s
+volume_group = cinder-volumes
+verbose = True
+auth_strategy = keystone
+state_path = /var/lib/cinder
+lock_path = /var/lock/cinder
+volumes_dir = /openstack/cinder/volumes
+my_ip = 192.168.2.210
+rpc_backend = rabbit
+
+[database]
+connection = mysql+pymysql://cinder:Cisco.123@controller01/cinder
+
+[keystone_authtoken]
+auth_uri = http://controller01:5000
+auth_url = http://controller01:35357
+auth_plugin = password
+project_domain_id = default
+user_domain_id = default
+project_name = service
+username = cinder
+password = Cisco.123
+
+[oslo_concurrency]
+lock_path = /var/lib/cinder/tmp
+
+[oslo_messaging_rabbit]
+rabbit_host = controller01
+rabbit_userid = openstack
+rabbit_password = Cisco.123
+```
+Now make sure you create the ```cinder directory```
+```
+mkdir /openstack/cinder
+chown cinder:cinder /openstack/cinder
+```
+Now migrate it over: 
+```
+su -s /bin/sh -c "cinder-manage db sync" cinder
+```
+Then restart the services
+```
+service nova-api restart
+service cinder-scheduler restart
+service cinder-api restart
+rm -f /var/lib/cinder/cinder.sqlite
+```
+
 
