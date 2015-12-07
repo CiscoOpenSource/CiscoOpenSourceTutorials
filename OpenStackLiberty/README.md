@@ -822,7 +822,10 @@ The only difference with this configuration is that it points to the
 controller node instead of an external service. 
 
 ```
-service chrony restart
+service chrony stop
+ntpdate -bs controller01
+hwclock -w
+service chrony start
 ```
 
 ### Install Nova on the compute node
