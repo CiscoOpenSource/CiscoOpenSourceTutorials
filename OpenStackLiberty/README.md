@@ -179,7 +179,7 @@ sudo ifup p1p2
 ```
 sudo apt-get install -y chrony
 ```
-Edit /etc/chrony.conf to look like:
+Edit /etc/chrony/chrony.conf to look like:
 ```
 server ntp.esl.cisco.com iburst
 keyfile /etc/chrony/chrony.keys
@@ -773,6 +773,7 @@ You should ensure that all compute nodes and the controller nodes share the same
 This will ensure name resolution can happen without worrying about an external DNS. 
 
 ### Update Compute node
+
 ```
 apt-get -y update
 apt-get -y upgrade
@@ -791,9 +792,8 @@ then run
 ```
 sysctl -p
 ```
-
-
 ### NTP on the compute node
+
 It's important that all nodes in the cluster be syncronized 
 to the same clock.  
 ```
@@ -817,8 +817,10 @@ allow 172.16/12
 logchange 0.5
 rtconutc
 ```
+
 The only difference with this configuration is that it points to the 
 controller node instead of an external service. 
+
 ```
 service chrony restart
 ```
@@ -1341,3 +1343,16 @@ service tgt restart
 service cinder-volume restart
 rm -rf /var/lib/cinder/cinder.sqlite 
 ```
+
+You should now be able to see the volume services running. From the controller node
+run:
+```
+cinder service-list
++------------------+--------------+------+---------+-------+----------------------------+-----------------+
+|      Binary      |     Host     | Zone |  Status | State |         Updated_at         | Disabled Reason |
++------------------+--------------+------+---------+-------+----------------------------+-----------------+
+| cinder-scheduler | controller01 | nova | enabled |   up  | 2015-12-07T06:48:56.000000 |        -        |
+|  cinder-volume   |  data02@lvm  | nova | enabled |   up  | 2015-12-07T06:48:55.000000 |        -        |
++------------------+--------------+------+---------+-------+----------------------------+-----------------+
+```
+If there are problems, please make sure your clocks are in sync.  
