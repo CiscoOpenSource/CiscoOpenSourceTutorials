@@ -255,6 +255,12 @@ collation-server = utf8_general_ci
 init-connect = 'SET NAMES utf8'
 character-set-server = utf8
 ```
+
+Also, please increase the max number of connections in the ```/etc/mysql/my.conf```
+to be about ```10000```.  
+```
+max_connections        = 10000
+```
 Next restart MariaDB:
 
 ```
