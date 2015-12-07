@@ -216,10 +216,6 @@ cp /usr/share/zoneinfo/America/Los_Angeles /etc/localtime
 ```
 Now you should be rolling with good time!
 
-
-
-
-
 ### Install OpenStack Repositories
 ```
 sudo apt-get install -y software-properties-common
@@ -1271,4 +1267,77 @@ service cinder-api restart
 rm -f /var/lib/cinder/cinder.sqlite
 ```
 
+## Storage Node
+The storage node needs to be updated with the latest level of Ubuntu and prepared like the other
+compute nodes.  You can also add this node into the cluster as a compute node or just leave
+it as a dedicated storage node.  
 
+Our storage node has several drives on it. 
+```
+apt-get install cinder-volume python-mysqldb
+```
+Now create some volumes
+```
+pvcreate /dev/sdb
+pvcreate /dev/sdc
+pvcreate /dev/sdd
+pvcreate /dev/sde
+vgcreate cinder-volumes /dev/sdb /dev/sdc /dev/sdd /dev/sde
+```
+Edit ```/etc/lvm/lvm.conf``` and add the filter line:
+```
+filter = [ "a/sda/", "a/sdb/", "a/sdc/", "a/sdd/", "a/sde/", "r/.*/"]
+```
+
+Confinguring the ```/etc/cinder/cinder.conf``` file looks almost like the controller node
+but with a few differences:
+```
+[DEFAULT]
+rootwrap_config = /etc/cinder/rootwrap.conf
+api_paste_confg = /etc/cinder/api-paste.ini
+iscsi_helper = tgtadm
+volume_name_template = volume-%s
+volume_group = cinder-volumes
+verbose = True
+auth_strategy = keystone
+state_path = /var/lib/cinder
+lock_path = /var/lock/cinder
+volumes_dir = /openstack/cinder/volumes
+my_ip = 192.168.2.212
+rpc_backend = rabbit
+enabled_backends = lvm
+glance_host = controller01
+
+[database]
+connection = mysql+pymysql://cinder:Cisco.123@controller01/cinder
+
+[keystone_authtoken]
+auth_uri = http://controller01:5000
+auth_url = http://controller01:35357
+auth_plugin = password
+project_domain_id = default
+user_domain_id = default
+project_name = service
+username = cinder
+password = Cisco.123
+
+[oslo_concurrency]
+lock_path = /var/lib/cinder/tmp
+
+[oslo_messaging_rabbit]
+rabbit_host = controller01
+rabbit_userid = openstack
+rabbit_password = Cisco.123
+
+[lvm]
+volume_driver = cinder.volume.drivers.lvm.LVMVolumeDriver
+volume_group = cinder-volumes
+iscsi_protocol = iscsi
+iscsi_helper = tgtadm
+```
+Now restart the services and pray you didn't make a type-o:
+```
+service tgt restart
+service cinder-volume restart
+rm -rf /var/lib/cinder/cinder.sqlite 
+```
