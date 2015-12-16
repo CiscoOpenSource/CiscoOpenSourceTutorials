@@ -1184,8 +1184,9 @@ neutron subnet-create public 192.168.2.0/24 --name public --allocation-pool star
 
 Another network for internal
 ```
-neutron net-create cisco-1 --share --provider:physical_network public --provider:network_type vlan --provider:segmentation_id 1
+neutron net-create cisco-1 --share --provider:physical_network public --provider:network_type vlan --provider:segmentation_id 1 --router:external True
 neutron subnet-create cisco-1 10.93.234.0/24 --name cisco --allocation-pool start=10.93.234.80,end=10.93.234.90 --dns-nameserver 10.93.234.38 --gateway 10.93.234.1
+
 
 Launching an instance:
 ```
