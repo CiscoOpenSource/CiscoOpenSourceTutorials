@@ -128,7 +128,7 @@ two different files: ```packerKey``` and ```packerKey.pub```.
 
 I then uploaded the ```packerKey.pub``` file to OpenStack using: 
 ```
-nova keypair-add packerKey --pub-key packerKey.pub
+nova keypair-add --pub-key packerKey.pub packerKey
 ```
 
 Now I reference it in the packer file which now looks like the following: 
