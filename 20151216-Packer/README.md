@@ -1,6 +1,6 @@
 # Using Packer with OpenStack
-### December 16, 2015
-### Vallard Benincosa [@vallard](http://twitter.com/vallard)
+##### December 16, 2015
+##### Vallard Benincosa [@vallard](http://twitter.com/vallard)
 
 [Packer](http://packer.io) is a great tool because it allows you to easily create and distribute
 the same image on every cloud platform.  
@@ -105,19 +105,36 @@ though I could log into it just fine. These were OpenStack clusters I built by m
 
 ![These Hands](http://www.quickmeme.com/img/6d/6d81c6fb0767104e2a58dce3f5e3666e5a34c41f407bcac7a3f1c75b0c0be46d.jpg "OpenStack built with these hands")
 
+I started doubting my OpenStack clustering skills and tried changing some parameters.  Nothing seemed to work so I
+turned back to Packer to investigate further. 
+
 Running in debug mode helped me locate the problem: 
 ```
 PACKER_LOG=1 PACKER_LOG_PATH=./packer.log packer build --debug coreos-jenkins.json 
 ```
-The output of the log showed me problems with the SSH key.  You see, as part of Packers build process it creates
+The output of the log similar to this [log file](https://gist.github.com/crimsongreen/52f2e7d21f77471835eb) showed me 
+problems Packer had with the SSH key.  You see, as part of Packers build process it creates
 its own SSH keypair so it can log into the system once created.  
 
- 
+The [workaround](https://github.com/mitchellh/packer/issues/2526) for now seems to be to not let Packer generate its
+own key but to set up a key prior to using Packer and then configuring Packer to use that key. 
 
+To generate the keypair, I ran: 
+```
+ssh-keygen -t rsa
+```
+When it asks where to store it, I just stored it in the same directory as my packer config file.  That then gave me
+two different files: ```packerKey``` and ```packerKey.pub```.  
+
+I then uploaded the ```packerKey.pub``` file to OpenStack using: 
+```
+nova keypair-add packerKey --pub-key packerKey.pub
+```
+
+Now I reference it in the packer file which now looks like the following: 
+ 
+```
 {
-  "_floating_ip_pool": "nova",
-  "_demo1_source_image": "4d723f4e-1cd0-4521-ae77-117a9cd18d24",
-  "_floating_ip": "xx.xx.xx.xx",
   "builders" : [{
     "use_floating_ip" : false,
     "type": "openstack",
@@ -136,6 +153,19 @@ its own SSH keypair so it can log into the system once created.
     "script" : "jenkins_setup.sh"
   }]  
 }
+```
+This file has a few differences from the previous one.  
+
+* ```ssh_keypair_name```: Rather than have Packer create a new key on the fly, we use one we've already created.
+* ```ssh_private_key_file```: This file should exist in the same directory. 
+* ```use_floating_ip```: In this cluster I used Providor networks so the concept of floating IPs doesn't apply. I set it to false in this case. 
+* ```networks```: This OpenStack environment also had more networking capabilities than the previous example and so I had to specify which one to use. 
+
+The cool thing about this is I can combine both of these files and use them to create images in two different OpenStack
+environments.  Even though they are configured different, Packer will build the same image as long as the source image is
+similar. 
+
+I'm hoping this saves someone lots of time!  Happy OpenStacking!
 
 
 
